@@ -3,64 +3,61 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
-use Kreait\Firebase\Factory;
+use App\Models\Simpanan;
+use App\Models\Pinjaman;
+use App\Models\User;
+use Illuminate\Support\Facades\Auth;
+use Kreait\Firebase\Firestore;
 
 class DashboardController extends Controller
 {
-    protected $auth;
-
+    protected $firestore;
+    
     public function __construct()
     {
-        $firebase = (new Factory)->withServiceAccount(base_path('firebase.json'));
-        $this->auth = $firebase->createAuth();
+        $this->firestore = app('firebase.firestore');
     }
 
-    public function index(Request $request)
+    public function index()
     {
-        $idToken = $request->bearerToken() ?? $request->cookie('firebase_token');
+        $user = Auth::user();
+        
+        // Get data from MySQL
+        $mysqlData = [
+            'total_simpanan' => Simpanan::where('user_id', $user->id)
+                                      ->where('status', 'approved')
+                                      ->sum('jumlah'),
+            'total_pinjaman' => Pinjaman::where('user_id', $user->id)
+                                      ->where('status', 'approved')
+                                      ->sum('jumlah'),
+            'simpanan_list' => Simpanan::where('user_id', $user->id)
+                                      ->latest()
+                                      ->take(5)
+                                      ->get(),
+            'pinjaman_list' => Pinjaman::where('user_id', $user->id)
+                                      ->latest()
+                                      ->take(5)
+                                      ->get()
+        ];
 
-        if (!$idToken) {
-            return redirect('/login')->withErrors(['msg' => 'Token not provided']);
-        }
+        // Get data from Firebase
+        $simpananRef = $this->firestore->database()
+            ->collection('simpanan')
+            ->where('user_id', '=', $user->id)
+            ->orderBy('created_at', 'desc')
+            ->limit(5);
+        
+        $pinjamanRef = $this->firestore->database()
+            ->collection('pinjaman')
+            ->where('user_id', '=', $user->id)
+            ->orderBy('created_at', 'desc')
+            ->limit(5);
 
-        try {
-            $verifiedIdToken = $this->auth->verifyIdToken($idToken);
-            $uid = $verifiedIdToken->claims()->get('sub');
-            $firebaseUser = $this->auth->getUser($uid);
+        $firebaseData = [
+            'simpanan_firebase' => $simpananRef->documents(),
+            'pinjaman_firebase' => $pinjamanRef->documents()
+        ];
 
-            return view('dashboard.index', [
-                'email' => $firebaseUser->email,
-                'uid' => $uid,
-            ]);
-
-        } catch (\Throwable $e) {
-            return redirect('/login')->withErrors(['msg' => 'Invalid or expired token']);
-        }
-    }
-
-    public function admin(Request $request)
-    {
-        // Sama seperti index, atau bisa dibuat method terpisah
-        $idToken = $request->bearerToken() ?? $request->cookie('firebase_token');
-
-        if (!$idToken) {
-            return redirect('/login')->withErrors(['msg' => 'Token not provided']);
-        }
-
-        try {
-            $verifiedIdToken = $this->auth->verifyIdToken($idToken);
-            $uid = $verifiedIdToken->claims()->get('sub');
-            $firebaseUser = $this->auth->getUser($uid);
-
-            // Cek role di Firestore atau database lain jika perlu di sini
-
-            return view('dashboard.admin', [
-                'email' => $firebaseUser->email,
-                'uid' => $uid,
-            ]);
-
-        } catch (\Throwable $e) {
-            return redirect('/login')->withErrors(['msg' => 'Invalid or expired token']);
-        }
+        return view('dashboard.user', array_merge($mysqlData, $firebaseData));
     }
 }

@@ -3,84 +3,54 @@
 namespace App\Http\Controllers;
 
 use App\Models\Simpanan;
+use App\Services\FirebaseService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 
 class SimpananController extends Controller
 {
-    public function __construct()
-    {
-        $this->middleware('auth');
-    }
+    protected $firebase;
 
-    public function index()
+    public function __construct(FirebaseService $firebase)
     {
-        $user = auth()->user();
-        $simpanan = $user->isAdmin() 
-            ? Simpanan::with('user')->latest()->get()
-            : $user->simpanan()->latest()->get();
-            
-        return view('simpanan.index', compact('simpanan'));
-    }
-
-    public function create()
-    {
-        return view('simpanan.create');
+        $this->firebase = $firebase;
     }
 
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'jenis_simpanan' => 'required|string|in:pokok,wajib,sukarela',
-            'jumlah' => 'required|numeric|min:0',
-            'tanggal' => 'required|date',
-            'keterangan' => 'nullable|string'
+            'jenis_simpanan' => 'required|in:pokok,wajib,sukarela',
+            'jumlah' => 'required|numeric|min:1000',
+            'keterangan' => 'nullable|string|max:255'
         ]);
 
-        $validated['user_id'] = auth()->id();
-        $validated['status'] = 'pending';
+        try {
+            // Simpan ke MySQL
+            $simpanan = Simpanan::create([
+                'user_id' => Auth::id(),
+                'jenis_simpanan' => $validated['jenis_simpanan'],
+                'jumlah' => $validated['jumlah'],
+                'tanggal' => now(),
+                'status' => 'pending',
+                'keterangan' => $validated['keterangan']
+            ]);
 
-        Simpanan::create($validated);
+            // Simpan ke Firestore
+            $this->firebase->saveToFirestore('simpanan', $simpanan->id, [
+                'user_id' => Auth::id(),
+                'jenis_simpanan' => $validated['jenis_simpanan'],
+                'jumlah' => (float) $validated['jumlah'],
+                'tanggal' => now()->format('Y-m-d H:i:s'),
+                'status' => 'pending',
+                'keterangan' => $validated['keterangan'] ?? '',
+                'created_at' => \Google\Cloud\Core\Timestamp::fromDateTime(now())
+            ]);
 
-        return redirect()->route('simpanan.index')
-            ->with('success', 'Simpanan berhasil ditambahkan');
-    }
+            return redirect()->route('simpanan.show', $simpanan)
+                           ->with('success', 'Pengajuan simpanan berhasil dibuat.');
 
-    public function show(Simpanan $simpanan)
-    {
-        $this->authorize('view', $simpanan);
-        return view('simpanan.show', compact('simpanan'));
-    }
-
-    public function edit(Simpanan $simpanan)
-    {
-        $this->authorize('update', $simpanan);
-        return view('simpanan.edit', compact('simpanan'));
-    }
-
-    public function update(Request $request, Simpanan $simpanan)
-    {
-        $this->authorize('update', $simpanan);
-
-        $validated = $request->validate([
-            'jenis_simpanan' => 'required|string|in:pokok,wajib,sukarela',
-            'jumlah' => 'required|numeric|min:0',
-            'tanggal' => 'required|date',
-            'keterangan' => 'nullable|string',
-            'status' => 'required|in:pending,approved,rejected'
-        ]);
-
-        $simpanan->update($validated);
-
-        return redirect()->route('simpanan.index')
-            ->with('success', 'Simpanan berhasil diperbarui');
-    }
-
-    public function destroy(Simpanan $simpanan)
-    {
-        $this->authorize('delete', $simpanan);
-        $simpanan->delete();
-
-        return redirect()->route('simpanan.index')
-            ->with('success', 'Simpanan berhasil dihapus');
+        } catch (\Exception $e) {
+            return back()->with('error', 'Terjadi kesalahan: ' . $e->getMessage());
+        }
     }
 }

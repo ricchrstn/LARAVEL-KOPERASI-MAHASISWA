@@ -16,6 +16,7 @@ return new class extends Migration
             $table->string('nim')->nullable()->after('firebase_uid');
             $table->string('faculty')->nullable()->after('nim');
             $table->string('phone')->nullable()->after('faculty');
+            $table->string('role')->default('user')->after('phone'); // ✅ tambahkan role di sini
         });
     }
 
@@ -25,7 +26,7 @@ return new class extends Migration
     public function down(): void
     {
         Schema::table('users', function (Blueprint $table) {
-            $table->dropColumn(['firebase_uid', 'nim', 'faculty', 'phone']);
+            $table->dropColumn(['firebase_uid', 'nim', 'faculty', 'phone', 'role']); // ✅ drop semuanya
         });
     }
 };

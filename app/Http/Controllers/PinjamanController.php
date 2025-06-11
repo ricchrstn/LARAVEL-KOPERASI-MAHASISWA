@@ -4,89 +4,79 @@ namespace App\Http\Controllers;
 
 use App\Models\Pinjaman;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+use Kreait\Firebase\Firestore;
 
 class PinjamanController extends Controller
 {
+    protected $firestore;
+    
     public function __construct()
     {
-        $this->middleware('auth');
-    }
-
-    public function index()
-    {
-        $user = auth()->user();
-        $pinjaman = $user->isAdmin() 
-            ? Pinjaman::with('user')->latest()->get()
-            : $user->pinjaman()->latest()->get();
-            
-        return view('pinjaman.index', compact('pinjaman'));
-    }
-
-    public function create()
-    {
-        return view('pinjaman.create');
+        $this->firestore = app('firebase.firestore');
     }
 
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'jumlah_pinjaman' => 'required|numeric|min:0',
-            'jangka_waktu' => 'required|integer|min:1|max:36',
-            'tanggal_pinjaman' => 'required|date',
-            'bunga' => 'required|numeric|between:0,100',
-            'keterangan' => 'nullable|string'
+            'jumlah' => 'required|numeric|min:100000',
+            'tenor_bulan' => 'required|integer|min:1|max:24',
+            'keterangan' => 'nullable|string|max:255'
         ]);
 
-        $validated['user_id'] = auth()->id();
-        $validated['status'] = 'pending';
-        $validated['total_pinjaman'] = $validated['jumlah_pinjaman'] * (1 + ($validated['bunga'] / 100));
+        // Hitung bunga dan cicilan
+        $bunga = 1;
+        $total = $validated['jumlah'] * (1 + ($bunga * $validated['tenor_bulan'] / 100));
+        $cicilan = $total / $validated['tenor_bulan'];
 
-        Pinjaman::create($validated);
-
-        return redirect()->route('pinjaman.index')
-            ->with('success', 'Pengajuan pinjaman berhasil dibuat');
-    }
-
-    public function show(Pinjaman $pinjaman)
-    {
-        $this->authorize('view', $pinjaman);
-        return view('pinjaman.show', compact('pinjaman'));
-    }
-
-    public function edit(Pinjaman $pinjaman)
-    {
-        $this->authorize('update', $pinjaman);
-        return view('pinjaman.edit', compact('pinjaman'));
-    }
-
-    public function update(Request $request, Pinjaman $pinjaman)
-    {
-        $this->authorize('update', $pinjaman);
-
-        $validated = $request->validate([
-            'jumlah_pinjaman' => 'required|numeric|min:0',
-            'jangka_waktu' => 'required|integer|min:1|max:36',
-            'tanggal_pinjaman' => 'required|date',
-            'tanggal_pelunasan' => 'nullable|date|after:tanggal_pinjaman',
-            'bunga' => 'required|numeric|between:0,100',
-            'keterangan' => 'nullable|string',
-            'status' => 'required|in:pending,approved,rejected,paid'
+        // Save to MySQL
+        $pinjaman = Pinjaman::create([
+            'user_id' => Auth::id(),
+            'jumlah' => $validated['jumlah'],
+            'bunga_persen' => $bunga,
+            'tenor_bulan' => $validated['tenor_bulan'],
+            'total_pembayaran' => $total,
+            'cicilan_per_bulan' => $cicilan,
+            'tanggal_pengajuan' => now(),
+            'status' => 'pending',
+            'keterangan' => $validated['keterangan']
         ]);
 
-        $validated['total_pinjaman'] = $validated['jumlah_pinjaman'] * (1 + ($validated['bunga'] / 100));
+        // Save to Firebase
+        $pinjamanRef = $this->firestore->database()->collection('pinjaman')->document($pinjaman->id);
+        $pinjamanRef->set([
+            'user_id' => Auth::id(),
+            'jumlah' => (float) $validated['jumlah'],
+            'bunga_persen' => (float) $bunga,
+            'tenor_bulan' => (int) $validated['tenor_bulan'],
+            'total_pembayaran' => (float) $total,
+            'cicilan_per_bulan' => (float) $cicilan,
+            'tanggal_pengajuan' => now()->format('Y-m-d H:i:s'),
+            'status' => 'pending',
+            'keterangan' => $validated['keterangan'] ?? '',
+            'created_at' => \Google\Cloud\Core\Timestamp::fromDateTime(now())
+        ]);
 
-        $pinjaman->update($validated);
-
-        return redirect()->route('pinjaman.index')
-            ->with('success', 'Data pinjaman berhasil diperbarui');
+        return redirect()->route('pinjaman.show', $pinjaman)
+                        ->with('success', 'Pengajuan pinjaman berhasil dibuat.');
     }
 
-    public function destroy(Pinjaman $pinjaman)
+    public function approve(Pinjaman $pinjaman)
     {
-        $this->authorize('delete', $pinjaman);
-        $pinjaman->delete();
+        // Update MySQL
+        $pinjaman->update([
+            'status' => 'approved',
+            'tanggal_approval' => now()
+        ]);
 
-        return redirect()->route('pinjaman.index')
-            ->with('success', 'Pinjaman berhasil dihapus');
+        // Update Firebase
+        $pinjamanRef = $this->firestore->database()->collection('pinjaman')->document($pinjaman->id);
+        $pinjamanRef->update([
+            ['path' => 'status', 'value' => 'approved'],
+            ['path' => 'tanggal_approval', 'value' => now()->format('Y-m-d H:i:s')],
+            ['path' => 'updated_at', 'value' => \Google\Cloud\Core\Timestamp::fromDateTime(now())]
+        ]);
+        
+        return back()->with('success', 'Pinjaman telah disetujui');
     }
 }

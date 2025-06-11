@@ -2,51 +2,49 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\DashboardController;
-use App\Http\Controllers\Auth\FirebaseLoginController;
-use App\Http\Controllers\Auth\AuthController;
+use App\Http\Controllers\Auth\FirebaseAuthController;
+use App\Http\Controllers\SimpananController;
+use App\Http\Controllers\PinjamanController;
+use App\Http\Controllers\ProfilController;
 
-Route::prefix('kopma')->group(function () {
-    // Auth routes
-    Route::get('login', [AuthController::class, 'showLoginForm'])->name('login');
-    Route::post('login', [AuthController::class, 'login']);
-    Route::post('logout', [AuthController::class, 'logout'])->name('logout');
-
-    Route::get('register', [AuthController::class, 'showRegistrationForm'])->name('register');
-    Route::post('register', [AuthController::class, 'register']);
-
-    Route::get('forgot-password', [AuthController::class, 'showForgotPasswordForm'])->name('password.request');
-    Route::post('forgot-password', [AuthController::class, 'sendResetLinkEmail'])->name('password.email');
-    Route::get('reset-password/{token}', [AuthController::class, 'showResetForm'])->name('password.reset');
-    Route::post('reset-password', [AuthController::class, 'reset'])->name('password.update');
-
-    // Dashboard, simpanan, pinjaman, dll
-    Route::get('dashboard', [DashboardController::class, 'index'])->name('dashboard');
-
-    Route::get('/admin/dashboard', [DashboardController::class, 'admin']);
-
-    Route::post('/verify-firebase-token', [FirebaseLoginController::class, 'verify']);
-
-    Route::get('/simpanan', function () {
-        return view('simpanan');
-    });
-
-    Route::get('/profil', function () {
-        return view('profil');
-    });
-
-    Route::get('/pinjaman', function () {
-        return view('pinjaman');
-    });
-
-    Route::get('/feedback', function () {
-        return view('feedback');
-    });
-
-    Route::get('/about', function () {
-        return view('about');
-    });
-});
-
+// Route global (jika masih digunakan)
 Auth::routes();
 
 Route::get('/home', [App\Http\Controllers\HomeController::class, 'index'])->name('home');
+
+// Prefix route untuk kopma
+Route::prefix('kopma')->group(function () {
+    // Auth routes
+    Route::get('login', [FirebaseAuthController::class, 'showLoginForm'])->name('login');
+    Route::post('login', [FirebaseAuthController::class, 'login']);
+    Route::post('logout', [FirebaseAuthController::class, 'logout'])->name('logout');
+
+    // Registration and password reset (opsional jika digunakan Firebase sepenuhnya)
+    Route::get('register', [FirebaseAuthController::class, 'showRegistrationForm'])->name('register');
+    Route::post('register', [FirebaseAuthController::class, 'register']);
+    Route::get('forgot-password', [FirebaseAuthController::class, 'showForgotPasswordForm'])->name('password.request');
+    Route::post('forgot-password', [FirebaseAuthController::class, 'sendResetLinkEmail'])->name('password.email');
+    Route::get('reset-password/{token}', [FirebaseAuthController::class, 'showResetForm'])->name('password.reset');
+    Route::post('reset-password', [FirebaseAuthController::class, 'reset'])->name('password.update');
+
+    // Route untuk verifikasi Firebase token
+    Route::post('/verify-firebase-token', [FirebaseAuthController::class, 'verify']);
+
+    // Protected routes
+    Route::middleware(['auth'])->group(function () {
+        // User routes
+        Route::get('dashboard', [DashboardController::class, 'index'])->name('dashboard');
+        Route::get('simpanan', [SimpananController::class, 'index'])->name('simpanan');
+        Route::get('pinjaman', [PinjamanController::class, 'index'])->name('pinjaman');
+        Route::get('profil', [ProfilController::class, 'index'])->name('profil');
+
+        // Optional static pages
+        Route::view('feedback', 'feedback')->name('feedback');
+        Route::view('about', 'about')->name('about');
+
+        // Admin routes
+        Route::middleware(['role:admin'])->group(function () {
+            Route::get('admin/dashboard', [DashboardController::class, 'admin'])->name('admin.dashboard');
+        });
+    });
+});
